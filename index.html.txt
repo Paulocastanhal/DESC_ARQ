@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ferramenta de OCR e Renomeação de PDFs</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📄</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://mozilla.github.io/pdf.js/build/pdf.mjs" type="module"></script>
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js'></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Roboto+Slab:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .file-item-card { transition: all 0.5s ease-out; }
+        .progress-bar-fill { transition: width 0.3s ease-in-out; }
+        #ocr-panel { transition: width 0.2s, height 0.2s, top 0.2s, left 0.2s; }
+        #ocr-panel button, #guide-panel button { transition: all 0.3s ease-in-out; }
+        
+        #ocr-panel.is-minimized > div:not(.panel-header) { display: none; }
+        #ocr-panel.is-minimized { height: auto !important; resize: none; }
+        #ocr-panel.is-maximized {
+            top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
+            max-width: 100vw !important; max-height: 100vh !important;
+            border-radius: 0; resize: none;
+        }
+
+        @keyframes pulse-light {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+        }
+        .animate-pulse-custom {
+            animation: pulse-light 2.5s infinite;
+        }
+
+        @media (min-width: 768px) {
+            #ocr-panel:not(.is-maximized) {
+                resize: both;
+                overflow: auto;
+            }
+            .panel-header {
+                cursor: move;
+            }
+        }
+
+        /* CSS DO GUIA NOBRADE */
+        .font-slab { font-family: 'Roboto Slab', serif; }
+        .timeline-item { position: relative; padding-bottom: 2.5rem; padding-left: 2.5rem; }
+        .timeline-item:last-child { padding-bottom: 0; }
+        .timeline-item::before { content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 2px; background-color: #D1D5DB; }
+        .timeline-dot { position: absolute; left: -0.625rem; top: 0.25rem; height: 1.25rem; width: 1.25rem; border-radius: 9999px; background-color: #ffffff; border: 2px solid; }
+        .collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
+        .collapsible-content.expanded { max-height: 500px; }
+        .mindmap-node { transition: transform 0.2s ease-in-out; }
+        .mindmap-node:hover { transform: scale(1.03); }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+
+    <header class="sticky top-0 z-40 w-full backdrop-blur flex-none transition-colors duration-500 lg:z-50 lg:border-b lg:border-slate-900/10 dark:border-slate-50/[0.06] bg-white/95 supports-backdrop-blur:bg-white/60 dark:bg-transparent">
+        <div class="container mx-auto">
+            <div class="flex items-center justify-between p-4">
+                <div class="flex items-center space-x-4">
+                    <div class="flex-shrink-0">
+                        <div class="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/50 rounded-full flex items-center justify-center">
+                            <svg class="w-6 h-6 text-indigo-500 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        </div>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold text-slate-900 dark:text-white">Ferramenta de Preparação e Download</h1>
+                        <p class="text-sm text-slate-500 dark:text-slate-400">Selecione, extraia o texto, renomeie e baixe seus arquivos PDF.</p>
+                    </div>
+                </div>
+                <div class="flex-shrink-0">
+                    <button id="open-guide-btn" class="px-3 py-2 text-sm font-bold text-red-800 dark:text-red-200 bg-red-200 dark:bg-red-900/50 rounded-lg animate-pulse-custom">
+                        Guia de Apoio
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="container mx-auto p-4 md:p-8">
+        <main class="space-y-10">
+            <section class="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-xl shadow-md border border-slate-200 dark:border-gray-700">
+                <h2 class="text-xl font-bold mb-4 border-b border-slate-200 dark:border-gray-700 pb-3 text-slate-700 dark:text-gray-100">1. Selecionar Arquivos</h2>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-gray-300 mb-2">Selecione os arquivos PDF:</label>
+                    <div id="drop-zone" class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-lg cursor-pointer hover:border-indigo-500 dark:bg-gray-800/50 transition-colors">
+                        <div class="space-y-1 text-center">
+                            <svg class="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true"><path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                            <div class="flex text-sm text-gray-600 dark:text-gray-400">
+                                <label for="file-upload-input" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">
+                                    <span>Carregue seus arquivos</span>
+                                    <input id="file-upload-input" name="file-upload" type="file" class="sr-only" multiple accept=".pdf">
+                                </label>
+                                <p class="pl-1">ou arraste e solte aqui</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <section id="staging-section" class="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-xl shadow-md border border-slate-200 dark:border-gray-700 hidden">
+                <div class="flex flex-wrap justify-between items-center border-b border-slate-200 dark:border-gray-700 pb-3 mb-4 gap-4">
+                    <h2 class="text-xl font-bold text-slate-700 dark:text-gray-100">2. Área de Preparação (<span id="file-count">0</span>)</h2>
+                    <button id="download-all-btn" class="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-all duration-200 ease-in-out transform hover:scale-105">
+                        Baixar Arquivos Preparados
+                    </button>
+                </div>
+                <div id="global-status" class="text-center text-sm text-gray-500 dark:text-gray-400 mb-4"></div>
+                <div id="file-list" class="space-y-4"></div>
+            </section>
+        </main>
+    </div>
+
+    <div id="ocr-panel" class="hidden fixed inset-0 w-screen h-screen bg-white dark:bg-gray-800 flex-col z-50 md:w-[35vw] md:max-w-[500px] md:h-auto md:top-24 md:right-5 md:inset-auto md:rounded-lg md:shadow-2xl md:border md:border-slate-200 dark:md:border-gray-700">
+        <div class="panel-header flex justify-between items-center p-3 border-b border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-900 md:rounded-t-lg flex-shrink-0">
+            <h3 id="panel-title" class="text-lg font-semibold truncate flex-grow text-slate-700 dark:text-gray-100">Extração de Texto</h3>
+            <div class="flex items-center space-x-1 md:space-x-2">
+                <button id="minimize-panel-btn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-gray-700 hidden md:block" title="Minimizar"><svg class="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 12H4"></path></svg></button>
+                <button id="maximize-panel-btn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-gray-700 hidden md:block" title="Maximizar/Restaurar"><svg class="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 3h18v18H3z"></path></svg></button>
+                <button id="close-panel-btn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-gray-700" title="Fechar"><svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke-width="2.5" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+        </div>
+        <div id="panel-content" class="p-4 bg-white dark:bg-gray-800 flex-shrink-0 overflow-y-auto">
+            <div id="ocr-status" class="text-center text-sm text-gray-500 dark:text-gray-400 mb-2"></div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-gray-300 mb-1">Texto Extraído:</label>
+                <textarea id="ocr-text" rows="8" class="w-full p-2 border bg-slate-50 dark:bg-gray-900 border-slate-300 dark:border-gray-600 text-slate-800 dark:text-gray-200 rounded-md text-justify placeholder-slate-400 dark:placeholder-gray-500" readonly placeholder="Aguardando extração..."></textarea>
+                <div class="flex space-x-2 mt-2">
+                    <button id="paste-to-name-btn" class="flex-1 px-4 py-2 bg-sky-600 text-white font-semibold rounded-lg shadow-md hover:bg-sky-700 disabled:bg-gray-600 disabled:cursor-not-allowed" disabled>Usar como Nome</button>
+                    <button id="paste-to-desc-btn" class="flex-1 px-4 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-600 disabled:cursor-not-allowed" disabled>Usar na Descrição</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="guide-panel" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-2xl shadow-2xl w-full max-w-7xl h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-slate-200 dark:border-gray-700 flex-shrink-0">
+                 <h2 class="font-slab text-2xl font-bold text-slate-800 dark:text-white">Plano de Ação: Implementando a NOBRADE</h2>
+                 <button id="close-guide-btn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-gray-700" title="Fechar Guia">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                 </button>
+            </div>
+            <main class="overflow-y-auto p-4 md:p-8 bg-gray-50 dark:bg-gray-900/70">
+                <section class="mb-16">
+                    <h3 class="font-slab text-3xl md:text-4xl font-bold text-center text-slate-800 dark:text-gray-100 mb-12">Cronograma Sequencial Interativo</h3>
+                    <div class="max-w-3xl mx-auto">
+                        <div class="timeline-item"><div class="timeline-dot border-blue-500 bg-blue-100"></div><div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"><div class="collapsible-trigger cursor-pointer p-6 border-l-4 border-blue-500 flex justify-between items-center"><div><span class="text-sm font-bold text-blue-600 dark:text-blue-400">FASE 1: PLANEJAMENTO</span><h4 class="text-xl font-bold mt-1 mb-2 text-slate-900 dark:text-white">Diagnóstico e Escopo</h4></div><span class="toggle-icon text-2xl text-blue-500 font-bold transform transition-transform duration-300">+</span></div><div class="collapsible-content bg-blue-50 dark:bg-blue-900/20"><div class="p-6 border-t border-blue-200 dark:border-blue-800"><h5 class="font-bold mb-3 text-blue-800 dark:text-blue-300">Passos:</h5><ul class="list-decimal list-inside space-y-2 text-blue-900 dark:text-blue-200"><li>Levantar volume, tipos de suporte e datas.</li><li>Avaliar estado de conservação.</li><li>Definir profundidade da descrição.</li><li>Alocar recursos (equipe, tempo).</li></ul></div></div></div></div>
+                        <div class="timeline-item"><div class="timeline-dot border-green-500 bg-green-100"></div><div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"><div class="collapsible-trigger cursor-pointer p-6 border-l-4 border-green-500 flex justify-between items-center"><div><span class="text-sm font-bold text-green-600 dark:text-green-400">FASE 2: PREPARAÇÃO</span><h4 class="text-xl font-bold mt-1 mb-2 text-slate-900 dark:text-white">Organização e Pesquisa</h4></div><span class="toggle-icon text-2xl text-green-500 font-bold transform transition-transform duration-300">+</span></div><div class="collapsible-content bg-green-50 dark:bg-green-900/20"><div class="p-6 border-t border-green-200 dark:border-green-800"><h5 class="font-bold mb-3 text-green-800 dark:text-green-300">Passos:</h5><ul class="list-decimal list-inside space-y-2 text-green-900 dark:text-green-200"><li>Executar higienização e reparos.</li><li>Acondicionar em embalagens adequadas.</li><li>Organizar fisicamente o acervo (arranjo).</li><li>Pesquisar e redigir História/Biografia do produtor.</li></ul></div></div></div></div>
+                        <div class="timeline-item"><div class="timeline-dot border-orange-500 bg-orange-100"></div><div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"><div class="collapsible-trigger cursor-pointer p-6 border-l-4 border-orange-500 flex justify-between items-center"><div><span class="text-sm font-bold text-orange-600 dark:text-orange-400">FASE 3: EXECUÇÃO</span><h4 class="text-xl font-bold mt-1 mb-2 text-slate-900 dark:text-white">Descrição Multinível</h4></div><span class="toggle-icon text-2xl text-orange-500 font-bold transform transition-transform duration-300">+</span></div><div class="collapsible-content bg-orange-50 dark:bg-orange-900/20"><div class="p-6 border-t border-orange-200 dark:border-orange-800"><h5 class="font-bold mb-3 text-orange-800 dark:text-orange-300">Passos:</h5><ul class="list-decimal list-inside space-y-2 text-orange-900 dark:text-orange-200"><li>Descrever Nível 1 (Fundo).</li><li>Descrever Nível 3 (Série).</li><li>Descrever Nível 4 (Dossiê).</li><li>Descrever Nível 5 (Item).</li></ul></div></div></div></div>
+                        <div class="timeline-item"><div class="timeline-dot border-purple-500 bg-purple-100"></div><div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"><div class="collapsible-trigger cursor-pointer p-6 border-l-4 border-purple-500 flex justify-between items-center"><div><span class="text-sm font-bold text-purple-600 dark:text-purple-400">FASE 4: VALIDAÇÃO</span><h4 class="text-xl font-bold mt-1 mb-2 text-slate-900 dark:text-white">Indexação e Revisão</h4></div><span class="toggle-icon text-2xl text-purple-500 font-bold transform transition-transform duration-300">+</span></div><div class="collapsible-content bg-purple-50 dark:bg-purple-900/20"><div class="p-6 border-t border-purple-200 dark:border-purple-800"><h5 class="font-bold mb-3 text-purple-800 dark:text-purple-300">Passos:</h5><ul class="list-decimal list-inside space-y-2 text-purple-900 dark:text-purple-200"><li>Extrair termos-chave (nomes, locais, assuntos).</li><li>Normalizar com vocabulários controlados.</li><li>Atribuir pontos de acesso.</li><li>Revisar todas as descrições.</li></ul></div></div></div></div>
+                        <div class="timeline-item"><div class="timeline-dot border-red-500 bg-red-100"></div><div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"><div class="collapsible-trigger cursor-pointer p-6 border-l-4 border-red-500 flex justify-between items-center"><div><span class="text-sm font-bold text-red-600 dark:text-red-400">FASE 5: DISPONIBILIZAÇÃO</span><h4 class="text-xl font-bold mt-1 mb-2 text-slate-900 dark:text-white">Publicação</h4></div><span class="toggle-icon text-2xl text-red-500 font-bold transform transition-transform duration-300">+</span></div><div class="collapsible-content bg-red-50 dark:bg-red-900/20"><div class="p-6 border-t border-red-200 dark:border-red-800"><h5 class="font-bold mb-3 text-red-800 dark:text-red-300">Passos:</h5><ul class="list-decimal list-inside space-y-2 text-red-900 dark:text-red-200"><li>Compilar instrumento de pesquisa.</li><li>Exportar para EAD/XML (se digital).</li><li>Publicar em sistema online ou impresso.</li><li>Divulgar aos usuários.</li></ul></div></div></div></div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    
+    <template id="file-item-template">
+        <div class="file-item-card bg-white dark:bg-gray-800/50 border border-slate-200 dark:border-gray-700 rounded-lg p-4 shadow-sm">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <div class="md:col-span-8 space-y-3">
+                    <div><label class="block text-xs font-medium text-slate-500 dark:text-gray-400">Renomear Arquivo:</label><input type="text" class="file-name-input mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border-slate-300 dark:border-gray-600 text-slate-800 dark:text-gray-200 rounded-md text-sm shadow-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"></div>
+                    <div><label class="block text-xs font-medium text-slate-500 dark:text-gray-400">Ementa / Descrição:</label><textarea class="file-desc-input mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border-slate-300 dark:border-gray-600 text-slate-800 dark:text-gray-200 rounded-md text-sm shadow-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500" rows="3"></textarea></div>
+                </div>
+                <div class="md:col-span-4 flex flex-col space-y-2 justify-center">
+                    <button class="extract-text-btn w-full px-3 py-2 text-sm font-medium text-center text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow transition-all duration-200 ease-in-out transform hover:scale-105">Extrair Texto (OCR)</button>
+                    <button class="remove-btn w-full px-3 py-2 text-sm font-medium text-center text-red-300 bg-red-900/50 rounded-lg hover:bg-red-800/60 transition-all duration-200 ease-in-out transform hover:scale-105">Remover</button>
+                    <p class="original-name text-xs text-gray-400 dark:text-gray-500 truncate text-center pt-1" title="Nome original"></p>
+                </div>
+            </div>
+            <div class="progress-container mt-3 hidden"><div class="w-full bg-gray-700 rounded-full h-2.5"><div class="progress-bar-fill bg-green-500 h-2.5 rounded-full w-0"></div></div><p class="progress-text text-xs text-center mt-1 text-gray-400">Aguardando...</p></div>
+        </div>
+    </template>
+
+    <script type="module">
+        import * as pdfjsLib from "https://mozilla.github.io/pdf.js/build/pdf.mjs";
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://mozilla.github.io/pdf.js/build/pdf.worker.mjs`;
+
+        let stagedFiles = [], currentlyActiveFileId = null;
+
+        const elements = {
+            dropZone: document.getElementById('drop-zone'), fileInput: document.getElementById('file-upload-input'),
+            fileListContainer: document.getElementById('file-list'), fileItemTemplate: document.getElementById('file-item-template'),
+            stagingSection: document.getElementById('staging-section'), fileCountSpan: document.getElementById('file-count'),
+            downloadAllBtn: document.getElementById('download-all-btn'), globalStatus: document.getElementById('global-status'),
+            panel: document.getElementById('ocr-panel'), closePanelBtn: document.getElementById('close-panel-btn'),
+            panelTitle: document.getElementById('panel-title'),
+            ocrStatus: document.getElementById('ocr-status'), ocrText: document.getElementById('ocr-text'),
+            pasteToNameBtn: document.getElementById('paste-to-name-btn'), pasteToDescBtn: document.getElementById('paste-to-desc-btn'),
+            minimizePanelBtn: document.getElementById('minimize-panel-btn'), maximizePanelBtn: document.getElementById('maximize-panel-btn'),
+            guidePanel: document.getElementById('guide-panel'),
+            openGuideBtn: document.getElementById('open-guide-btn'),
+            closeGuideBtn: document.getElementById('close-guide-btn'),
+        };
+
+        const handleFiles = (files) => {
+            const existingNames = new Set(stagedFiles.map(f => f.originalFile.name));
+            const newFiles = [...files].filter(f => f.type === 'application/pdf');
+            const skippedFiles = [];
+            const filesToAdd = newFiles.filter(file => !existingNames.has(file.name) || (skippedFiles.push(file.name), false));
+            if (skippedFiles.length > 0) alert(`Os seguintes arquivos já foram ignorados:\n- ${skippedFiles.join('\n- ')}`);
+            filesToAdd.forEach(file => stagedFiles.push({ id: `file-${Date.now()}-${Math.random()}`, originalFile: file, newName: file.name.replace(/\.pdf$/i, ''), description: '' }));
+            if (filesToAdd.length > 0) renderFileList();
+        };
+
+        const renderFileList = () => {
+            elements.fileListContainer.innerHTML = '';
+            stagedFiles.forEach(fileData => {
+                const card = elements.fileItemTemplate.content.cloneNode(true);
+                card.querySelector('.file-item-card').dataset.id = fileData.id;
+                const nameInput = card.querySelector('.file-name-input'); nameInput.value = fileData.newName;
+                nameInput.addEventListener('input', e => stagedFiles.find(f => f.id === fileData.id).newName = e.target.value);
+                const descInput = card.querySelector('.file-desc-input'); descInput.value = fileData.description;
+                descInput.addEventListener('input', e => stagedFiles.find(f => f.id === fileData.id).description = e.target.value);
+                const originalNameEl = card.querySelector('.original-name');
+                originalNameEl.textContent = fileData.originalFile.name;
+                originalNameEl.title = fileData.originalFile.name;
+                card.querySelector('.extract-text-btn').addEventListener('click', () => runOcrForFile(fileData));
+                card.querySelector('.remove-btn').addEventListener('click', () => removeFile(fileData.id));
+                elements.fileListContainer.appendChild(card);
+            });
+            elements.fileCountSpan.textContent = stagedFiles.length;
+            elements.stagingSection.classList.toggle('hidden', stagedFiles.length === 0);
+            elements.downloadAllBtn.disabled = stagedFiles.length === 0;
+        };
+        
+        const removeFile = (fileId) => {
+            const card = elements.fileListContainer.querySelector(`[data-id="${fileId}"]`);
+            if (card) {
+                card.style.transform = 'scale(0.9)'; card.style.opacity = '0';
+                setTimeout(() => { stagedFiles = stagedFiles.filter(f => f.id !== fileId); renderFileList(); }, 500);
+            }
+        };
+
+        const resetOcrPanel = () => {
+            elements.ocrStatus.textContent = '';
+            elements.ocrText.value = '';
+            elements.ocrText.readOnly = true;
+            elements.pasteToNameBtn.disabled = true;
+            elements.pasteToDescBtn.disabled = true;
+        };
+
+        const runOcrForFile = async (fileData) => {
+            currentlyActiveFileId = fileData.id;
+            elements.panel.classList.remove('hidden', 'is-minimized', 'is-maximized');
+            elements.panelTitle.textContent = `Extraindo de: ${fileData.originalFile.name}`;
+            resetOcrPanel();
+            elements.ocrStatus.textContent = 'Preparando PDF...';
+
+            try {
+                const arrayBuffer = await fileData.originalFile.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const page = await pdf.getPage(1);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const hiddenCanvas = document.createElement('canvas');
+                hiddenCanvas.height = viewport.height;
+                hiddenCanvas.width = viewport.width;
+                await page.render({ canvasContext: hiddenCanvas.getContext('2d'), viewport: viewport }).promise;
+                elements.ocrStatus.textContent = 'Inicializando OCR...';
+                const worker = await Tesseract.createWorker('por', 1, {
+                    logger: m => {
+                        if (m.status === 'recognizing text') elements.ocrStatus.textContent = `Reconhecendo... ${Math.round(m.progress * 100)}%`;
+                        else if (m.status === 'loading language model') elements.ocrStatus.textContent = `Carregando modelo...`;
+                    }
+                });
+                const { data } = await worker.recognize(hiddenCanvas);
+                await worker.terminate();
+                const rawText = data.text;
+                const processedText = rawText.replace(/\n\s*\n/g, '__P__').replace(/\n/g, ' ').replace(/__P__/g, '\n\n');
+                elements.ocrText.value = processedText;
+                elements.ocrText.readOnly = false;
+                elements.pasteToNameBtn.disabled = false;
+                elements.pasteToDescBtn.disabled = false;
+                elements.ocrStatus.textContent = 'Extração concluída!';
+            } catch (error) {
+                elements.ocrStatus.textContent = 'Ocorreu um erro durante a extração.';
+                console.error("OCR Process Error:", error);
+            }
+        };
+
+        const updateCardInput = (targetSelector, btn) => {
+            const card = elements.fileListContainer.querySelector(`[data-id="${currentlyActiveFileId}"]`);
+            if (!card) return;
+            const { selectionStart, selectionEnd, value } = elements.ocrText;
+            const textToUse = (selectionStart !== selectionEnd) ? value.substring(selectionStart, selectionEnd) : value;
+            if (textToUse.trim() !== '') {
+                const input = card.querySelector(targetSelector);
+                input.value = textToUse.trim();
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                const originalText = btn.textContent;
+                btn.disabled = true;
+                btn.classList.remove('bg-sky-600', 'bg-teal-600', 'hover:bg-sky-700', 'hover:bg-teal-700');
+                btn.classList.add('bg-green-600');
+                btn.textContent = '✓ Copiado!';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.classList.remove('bg-green-600');
+                    btn.classList.add(originalText === 'Usar como Nome' ? 'bg-sky-600' : 'bg-teal-600');
+                    btn.classList.add(originalText === 'Usar como Nome' ? 'hover:bg-sky-700' : 'hover:bg-teal-700');
+                    btn.textContent = originalText;
+                }, 2000);
+            }
+        };
+        elements.pasteToNameBtn.addEventListener('click', e => updateCardInput('.file-name-input', e.target));
+        elements.pasteToDescBtn.addEventListener('click', e => updateCardInput('.file-desc-input', e.target));
+        
+        elements.closePanelBtn.addEventListener('click', () => elements.panel.classList.add('hidden'));
+        
+        let lastPanelState = {};
+        elements.minimizePanelBtn.addEventListener('click', () => elements.panel.classList.toggle('is-minimized'));
+        elements.maximizePanelBtn.addEventListener('click', () => {
+            if (elements.panel.classList.contains('is-maximized')) {
+                elements.panel.style.top = lastPanelState.top; elements.panel.style.left = lastPanelState.left;
+                elements.panel.style.width = lastPanelState.width; elements.panel.style.height = lastPanelState.height;
+                elements.panel.classList.remove('is-maximized');
+            } else {
+                lastPanelState = { top: `${elements.panel.offsetTop}px`, left: `${elements.panel.offsetLeft}px`, width: `${elements.panel.offsetWidth}px`, height: `${elements.panel.offsetHeight}px`};
+                elements.panel.style.top = ''; elements.panel.style.left = ''; elements.panel.style.width = ''; elements.panel.style.height = '';
+                elements.panel.classList.add('is-maximized');
+            }
+        });
+
+        const initDraggablePanel = () => {
+            const panelHeader = document.querySelector('.panel-header');
+            let isDragging = false, offsetX, offsetY;
+            panelHeader.addEventListener('mousedown', (e) => {
+                if (window.innerWidth < 768 || elements.panel.classList.contains('is-maximized')) return;
+                isDragging = true;
+                offsetX = e.clientX - elements.panel.offsetLeft; offsetY = e.clientY - elements.panel.offsetTop;
+                elements.panel.style.opacity = '0.9'; e.preventDefault();
+            });
+            document.addEventListener('mousemove', e => {
+                if (isDragging) {
+                    elements.panel.style.left = `${e.clientX - offsetX}px`;
+                    elements.panel.style.top = `${e.clientY - offsetY}px`;
+                }
+            });
+            document.addEventListener('mouseup', () => { isDragging = false; elements.panel.style.opacity = '1'; });
+        };
+        initDraggablePanel();
+        
+        const downloadFile = (fileData) => {
+             return new Promise((resolve) => {
+                const card = elements.fileListContainer.querySelector(`[data-id="${fileData.id}"]`);
+                if (!card) return resolve();
+                card.querySelector('.progress-container').classList.remove('hidden');
+                const namePart = fileData.newName.trim().replace(/[\\/:*?"<>|]/g, '-');
+                const descPart = fileData.description.trim().replace(/[\\/:*?"<>|]/g, '-');
+                const finalName = `${descPart ? `${namePart} - ${descPart}` : namePart}.pdf`;
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(fileData.originalFile);
+                link.download = finalName;
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+                card.querySelector('.progress-bar-fill').style.width = '100%';
+                card.querySelector('.progress-text').textContent = `Baixado!`;
+                setTimeout(resolve, 1000);
+            });
+        };
+
+        elements.downloadAllBtn.addEventListener('click', async () => {
+            elements.downloadAllBtn.disabled = true;
+            const filesToDownload = stagedFiles.filter(file => {
+                const originalNameWithoutExt = file.originalFile.name.replace(/\.pdf$/i, '');
+                return file.newName !== originalNameWithoutExt || file.description.trim() !== '';
+            });
+            if (filesToDownload.length === 0) {
+                elements.globalStatus.textContent = 'Nenhum arquivo foi renomeado ou descrito para baixar.';
+                setTimeout(() => { elements.globalStatus.textContent = ''; elements.downloadAllBtn.disabled = stagedFiles.length === 0; }, 4000);
+                return;
+            }
+            elements.globalStatus.textContent = `Iniciando o download de ${filesToDownload.length} arquivo(s)...`;
+            for (const file of filesToDownload) { await downloadFile(file); removeFile(file.id); await new Promise(r => setTimeout(r, 300)); }
+            elements.globalStatus.textContent = 'Processo finalizado.';
+            setTimeout(() => { elements.globalStatus.textContent = ''; }, 3000);
+        });
+
+        elements.openGuideBtn.addEventListener('click', () => {
+            elements.guidePanel.classList.remove('hidden');
+        });
+        elements.closeGuideBtn.addEventListener('click', () => {
+            elements.guidePanel.classList.add('hidden');
+        });
+        const triggers = document.querySelectorAll('.collapsible-trigger');
+        triggers.forEach(trigger => {
+            trigger.addEventListener('click', () => {
+                const content = trigger.nextElementSibling;
+                const icon = trigger.querySelector('.toggle-icon');
+                const isExpanded = content.classList.contains('expanded');
+                const parentContainer = trigger.closest('section, .max-w-3xl, .grid');
+                if (parentContainer) {
+                    parentContainer.querySelectorAll('.collapsible-content').forEach(c => {
+                        if (c !== content) {
+                            c.classList.remove('expanded');
+                            const otherIcon = c.previousElementSibling.querySelector('.toggle-icon');
+                            if(otherIcon) otherIcon.textContent = '+';
+                        }
+                    });
+                }
+                if (!isExpanded) {
+                    content.classList.add('expanded');
+                    icon.textContent = '−';
+                } else {
+                    content.classList.remove('expanded');
+                    icon.textContent = '+';
+                }
+            });
+        });
+        
+        const initGuideButtonAnimation = () => {
+            const btn = elements.openGuideBtn;
+            if (!btn) return;
+            const texts = ["Guia de Apoio", "NOBRADE"];
+            let currentIndex = 0;
+            setInterval(() => {
+                currentIndex = (currentIndex + 1) % texts.length;
+                btn.textContent = texts[currentIndex];
+            }, 2500);
+        };
+        initGuideButtonAnimation();
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eName => elements.dropZone.addEventListener(eName, e => { e.preventDefault(); e.stopPropagation(); }));
+        ['dragenter', 'dragover'].forEach(eName => elements.dropZone.addEventListener(eName, () => elements.dropZone.classList.add('border-indigo-500')));
+        ['dragleave', 'drop'].forEach(eName => elements.dropZone.addEventListener(eName, () => elements.dropZone.classList.remove('border-indigo-500')));
+        elements.dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+        elements.fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+    </script>
+</body>
+</html>
